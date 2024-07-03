@@ -22,11 +22,13 @@ Pymana can take command line arguments to set some custom run-time variables, fo
 
 - Note: Example arguments usage: ``sudo python pymana.py --iface wlan1 --conf custom --creds custom``, this will run pymana using the wireless interface ``wlan1``, with the configurations present in the file ``custom.conf`` and outputting captures to the file ``credentials-custom.json``.
 
-## Authentication server certificates
+## Authentication Server certificates
 
 The ``eduroam.conf`` file is configured to use the certificates present in the ``certs`` folder, ``server.key`` corresponds to the private key and ``server.pem`` to the public key, generated using openssl.
 
-If for any reason you need your custom certificate (you can use the openssl or XCA packages for example), you can generate the keys, paste them in the ``certs`` folder (or another) and then modify the respective configuration file (``eduroam.conf``) lines (``server_cert`` and ``private_key``) to point to the new public and private keys.
+It is recommended to generate and use new keys (you can use the openssl or XCA packages for example) since the ones provided are publicly available. To generate new keys using the ``openssl`` package, a file named ``generate-certs`` is provided, which can be run with ``./generate-certs``.
+
+If you intend to provide more detailed certificates and have better management over them, the ``XCA`` package is recommended. You can generate the keys, paste them in the ``certs`` folder (or another) and then modify the respective configuration file (``eduroam.conf``) lines (``server_cert`` and ``private_key``) to point to the new public and private keys if needed.
 
 # Installing drivers (ALFA adapters)
 

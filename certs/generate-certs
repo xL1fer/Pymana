@@ -1,0 +1,27 @@
+#!/bin/sh
+
+set -e
+
+if ! openssl genrsa -out server.key 2048 2>&1
+then
+    echo Could not create certificate. Openssl output was: >&2
+    cat $TMPOUT >&2
+    exit 1
+fi
+
+if ! openssl req -new -sha256 -key server.key -config server.cnf -out csr.csr
+then
+    echo Could not create certificate. Openssl output was: >&2
+    cat $TMPOUT >&2
+    exit 1
+fi
+
+if ! openssl req -x509 -sha256 -days 365 -key server.key -in csr.csr \
+    -out server.pem
+then
+    echo Could not create certificate. Openssl output was: >&2
+    cat $TMPOUT >&2
+    exit 1
+fi
+
+chmod 600 server.key
