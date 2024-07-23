@@ -174,7 +174,7 @@ Configurations and accept/deny lists can be reloaded with the command ``sudo kil
 
 # Analyzing results
 
-Hostapd will most likely always retrieve the username of the device trying to connect. Whether or not it also finds the password depends on the EAP mechanismsm being used. In case it is EAP-TTLS with PAP, it will display the plain-text password. In case of EAP-PEAP with MSCHAPV2, we will need to do an extra hash cracking.
+Hostapd will most likely always retrieve the username of the device trying to connect. Whether or not it also finds the password depends on the EAP mechanismsm being used. In case it is EAP-TTLS with PAP, it will display the plain-text password. In case of EAP-PEAP with MSCHAPv2, we will need to do an extra hash cracking.
 
 ```
 *sample output*
@@ -245,20 +245,20 @@ By looking at the output ``MANA EAP EAP-MSCHAPV2 HASHCAT | user@realm::::2252fb3
 Now, we just need to execute the following command:
 
 ```
-hashcat -m 5500 -a3 hashcat-pw.txt
+hashcat -m 5500 -a 3 hashcat-pw.txt
 ```
 
 Or if you want to try to optimize the search:
 
 ```
-hashcat -m 5500 -a3 hashcat-pw.txt -1 "?l?u?d" "?1?1?1?1?1?1?1?1?1?1?1?1" --increment
+hashcat -m 5500 -a 3 hashcat-pw.txt -1 "?l?u?d" "?1?1?1?1?1?1?1?1?1?1?1?1" --increment
 ```
 
 |Argument           |Description                    |
 |-------------------|-------------------------------|
-|-m                 |`eap authentication method used (5500 corresponds to MSCHAPV2)`|
-|-a3                |`bruteforce`                   |
-|-1                 |`sets the mask`                |
+|-m                 |`hashing method used (5500 corresponds to MSCHAPv2)`|
+|-a                 |`cracking method to be used (3 correspondes to bruteforce)`|
+|-1                 |`specify a mask`|
 |--increment        |`increments by each character to the extent of the mask`|
 
 - Note: Hashcat mask attack documentation can be found in the reference links.
