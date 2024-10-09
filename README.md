@@ -6,7 +6,7 @@ To download this module and its hostapd-mana dependency, you can use ``git clone
 
 Pymana can be executed with ``sudo python pymana.py`` or ``sudo python3 pymana.py`` if python 3 is installed.
 
-- Note: Before starting the Pymana script, it is recommended to ensure that the hostapd-mana package is effectively present and compiled in this module directory.
+- Note: Before starting the Pymana script, it is recommended to ensure that the hostapd-mana package is effectively present and compiled in this module directory. To do so, you can use the commands ``make -C hostapd-mana/hostapd clean`` to clean up any previous compilation files and ``make -C hostapd-mana/hostapd`` to compile. If you get some dependency error, you can try to fix it by installing the ``libnl-genl-3-dev`` package (``sudo apt-get update && sudo apt-get install -y libnl-genl-3-dev``).
 
 For the OS, it is recommended to use Kali Linux, a distribution that already contains a bunch of features for Wi-Fi analysis purposes.
 
